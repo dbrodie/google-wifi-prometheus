@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -16,7 +15,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-var logger = log.New
+var (
+	InfoLogger    *log.Logger
+	WarningLogger *log.Logger
+	ErrorLogger   *log.Logger
+)
 
 type GoogleWifi struct {
 	apiToken string
@@ -26,38 +29,38 @@ type GoogleWifi struct {
 func (gw *GoogleWifi) initApiKey() error {
 	req, err := http.NewRequest("POST", "https://oauthaccountmanager.googleapis.com/v1/issuetoken?app_id=com.google.OnHub&client_id=586698244315-vc96jg3mn4nap78iir799fc2ll3rk18s.apps.googleusercontent.com&hl=en-US&lib_ver=3.3&response_type=token&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faccesspoints+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fclouddevices", nil)
 	if err != nil {
-		log.Fatal(err)
+		ErrorLogger.Println(err)
 		return err
 	}
 
-	fmt.Println("Refresh Token ", os.Getenv("GW_REFRESH_TOKEN"))
+	InfoLogger.Println("Refresh Token ", os.Getenv("GW_REFRESH_TOKEN"))
 
 	req.Header.Set("Authorization", "Bearer "+os.Getenv("GW_REFRESH_TOKEN"))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		ErrorLogger.Println(err)
 		return err
 	}
 	defer resp.Body.Close()
 
 	respData, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
+		ErrorLogger.Println(err)
+		return err
 	}
 
 	respMap := make(map[string]interface{})
 	err = json.Unmarshal(respData, &respMap)
 	if err != nil {
-		log.Fatal(err)
+		ErrorLogger.Println(err)
 		return err
 	}
 
 	token, ok := respMap["token"].(string)
 	if !ok {
-		log.Fatal(resp.Body)
-		os.Exit(1)
+		ErrorLogger.Println(resp.Body)
+		return err
 	}
 
 	gw.apiToken = token
@@ -69,7 +72,7 @@ func (gw *GoogleWifi) initGroups() error {
 
 	req, err := http.NewRequest("GET", "https://accesspoints.googleapis.com/v2/groups", nil)
 	if err != nil {
-		log.Fatal(err)
+		ErrorLogger.Println(err)
 		return err
 	}
 
@@ -77,23 +80,23 @@ func (gw *GoogleWifi) initGroups() error {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		ErrorLogger.Println(err)
 		return err
 	}
 	defer resp.Body.Close()
 
-	fmt.Println("initGroups Query status ", resp.Status)
+	InfoLogger.Println("initGroups Query status ", resp.Status)
 
 	respData, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
+		ErrorLogger.Println(err)
+		return err
 	}
 
 	respMap := make(map[string]interface{})
 	err = json.Unmarshal(respData, &respMap)
 	if err != nil {
-		log.Fatal(err)
+		ErrorLogger.Println(err)
 		return err
 	}
 
@@ -105,25 +108,27 @@ func (gw *GoogleWifi) initGroups() error {
 	return nil
 }
 
-func createGoogleWifi() GoogleWifi {
+func createGoogleWifi() (*GoogleWifi, error) {
 
-	googleWifi := GoogleWifi{}
+	googleWifi := &GoogleWifi{}
 
 	err := googleWifi.initApiKey()
 	if err != nil {
-		os.Exit(1)
+		ErrorLogger.Println(err)
+		return nil, err
 	}
 
-	fmt.Println("token ", googleWifi.apiToken)
+	// InfoLogger.Println("token ", googleWifi.apiToken)
 
 	err = googleWifi.initGroups()
 	if err != nil {
-		os.Exit(1)
+		ErrorLogger.Println(err)
+		return nil, err
 	}
 
-	fmt.Println("groupId ", googleWifi.groupId)
+	InfoLogger.Println("groupId ", googleWifi.groupId)
 
-	return googleWifi
+	return googleWifi, nil
 
 }
 
@@ -136,39 +141,39 @@ type GoogleWifiMetrics struct {
 func (gw *GoogleWifi) getBandwidthMetrics() ([]GoogleWifiMetrics, error) {
 	req, err := http.NewRequest("GET", "https://accesspoints.googleapis.com/v2/groups/"+gw.groupId+"/realtimeMetrics", nil)
 	if err != nil {
-		log.Fatal(err)
+		ErrorLogger.Println(err)
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+gw.apiToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		ErrorLogger.Println(err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		log.Fatal("getBandwidthMetrics Query status ", resp.Status)
+		ErrorLogger.Println("getBandwidthMetrics Query status ", resp.Status)
 		return nil, errors.New("getBandwidthMetrics HTTP Request failed")
 	}
 
 	respData, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
+		ErrorLogger.Println(err)
+		return nil, err
 	}
 
 	respMap := make(map[string]interface{})
 	err = json.Unmarshal(respData, &respMap)
 	if err != nil {
-		log.Fatal(err)
+		ErrorLogger.Println(err)
 		return nil, err
 	}
 
 	stationMetrics, ok := respMap["stationMetrics"].([]interface{})
 	if !ok {
-		fmt.Println(("No station metrics??"))
+		ErrorLogger.Println(("No station metrics??"))
 		return nil, errors.New("Null station metrics")
 	}
 
@@ -184,7 +189,7 @@ func (gw *GoogleWifi) getBandwidthMetrics() ([]GoogleWifiMetrics, error) {
 		traffic, ok := stationMetric["traffic"].(map[string]interface{})
 
 		if !ok {
-			fmt.Println("Entry empty??", metric.deviceId)
+			WarningLogger.Println("Entry empty??", metric.deviceId)
 			continue
 		}
 
@@ -194,7 +199,7 @@ func (gw *GoogleWifi) getBandwidthMetrics() ([]GoogleWifiMetrics, error) {
 		if ok {
 			vali, err = strconv.Atoi(vals)
 			if err != nil {
-				log.Fatal(err)
+				ErrorLogger.Println(err)
 				return nil, err
 			}
 			metric.transmitSpeedBps = vali
@@ -204,13 +209,11 @@ func (gw *GoogleWifi) getBandwidthMetrics() ([]GoogleWifiMetrics, error) {
 		if ok {
 			vali, err = strconv.Atoi(vals)
 			if err != nil {
-				log.Fatal(err)
+				ErrorLogger.Println(err)
 				return nil, err
 			}
 			metric.receiveSpeedBps = vali
 		}
-
-		// fmt.Println("Entry ", metric.deviceId, " Speed ", metric.transmitSpeedBps, " | ", metric.receiveSpeedBps)
 
 		res = append(res, metric)
 	}
@@ -218,12 +221,12 @@ func (gw *GoogleWifi) getBandwidthMetrics() ([]GoogleWifiMetrics, error) {
 	return res, nil
 }
 
-func recordBandwidthMetrcis(googleWifi GoogleWifi) {
+func recordBandwidthMetrcis(googleWifi *GoogleWifi) {
 	go func() {
 		for {
 			metrics, err := googleWifi.getBandwidthMetrics()
 			if err != nil {
-				log.Fatal(err)
+				ErrorLogger.Fatal(err)
 			}
 
 			for _, metric := range metrics {
@@ -256,13 +259,19 @@ var (
 )
 
 func main() {
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	InfoLogger = log.New(os.Stderr, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	WarningLogger = log.New(os.Stderr, "WARNING: ", log.Ldate|log.Ltime|log.Lshortfile)
+	ErrorLogger = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
 
-	googleWifi := createGoogleWifi()
+	googleWifi, err := createGoogleWifi()
+
+	if err != nil {
+		ErrorLogger.Fatal(err)
+	}
 
 	recordBandwidthMetrcis(googleWifi)
 
-	fmt.Println("Starting!")
+	InfoLogger.Println("Starting!")
 
 	http.Handle("/metrics", promhttp.Handler())
 	log.Fatal(http.ListenAndServe(":2112", nil))
