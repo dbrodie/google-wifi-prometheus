@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -14,6 +15,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+var logger = log.New
 
 type GoogleWifi struct {
 	apiToken string
@@ -79,6 +82,8 @@ func (gw *GoogleWifi) initGroups() error {
 	}
 	defer resp.Body.Close()
 
+	fmt.Println("initGroups Query status ", resp.Status)
+
 	respData, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatal(err)
@@ -143,6 +148,8 @@ func (gw *GoogleWifi) getBandwidthMetrics() ([]GoogleWifiMetrics, error) {
 	}
 	defer resp.Body.Close()
 
+	fmt.Println("getBandwidthMetrics Query status ", resp.Status)
+
 	respData, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatal(err)
@@ -156,7 +163,11 @@ func (gw *GoogleWifi) getBandwidthMetrics() ([]GoogleWifiMetrics, error) {
 		return nil, err
 	}
 
-	stationMetrics := respMap["stationMetrics"].([]interface{})
+	stationMetrics, ok := respMap["stationMetrics"].([]interface{})
+	if !ok {
+		fmt.Println(("No station metrics??"))
+		return nil, errors.New("Null station metrics")
+	}
 
 	var res []GoogleWifiMetrics
 
@@ -217,7 +228,7 @@ func recordBandwidthMetrcis(googleWifi GoogleWifi) {
 				bandwidth_download.WithLabelValues(metric.deviceId).Set(float64(metric.receiveSpeedBps))
 			}
 
-			time.Sleep(2 * time.Second)
+			time.Sleep(5 * time.Second)
 		}
 	}()
 }
