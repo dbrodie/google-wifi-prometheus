@@ -148,7 +148,10 @@ func (gw *GoogleWifi) getBandwidthMetrics() ([]GoogleWifiMetrics, error) {
 	}
 	defer resp.Body.Close()
 
-	fmt.Println("getBandwidthMetrics Query status ", resp.Status)
+	if resp.StatusCode != 200 {
+		log.Fatal("getBandwidthMetrics Query status ", resp.Status)
+		return nil, errors.New("getBandwidthMetrics HTTP Request failed")
+	}
 
 	respData, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
